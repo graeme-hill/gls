@@ -36,9 +36,23 @@ enum JsTokenType {
     LessThanOrEqual,
     GreaterThanOrEqual,
     FatArrow,
+    Colon,
     Semicolon,
     Dot,
     DotDotDot,
+    OrOr,
+    Or,
+    And,
+    AndAnd,
+    OrEquals,
+    AndEquals,
+    Xor,
+    XorEquals,
+    Bang,
+    ShiftRight,
+    ShiftRightZeroFill,
+    ShiftLeft,
+    BitwiseNot,
     Unexpected
 }
 
@@ -136,17 +150,6 @@ impl<'a> JsLexer<'a> {
             },
         }
     }
-
-    // fn tok_until_char(&mut self, token: JsTokenType, ch: char) -> Option<Token<JsTokenType>> {
-    //     loop {
-    //         match self.forward() {
-    //             Some(c) if c == ch => break,
-    //             None => break,
-    //             _ => continue,
-    //         };
-    //     };
-    //     self.emit(token)
-    // }
 }
 
 impl<'a> Lexer<JsTokenType> for JsLexer<'a> {
@@ -155,8 +158,7 @@ impl<'a> Lexer<JsTokenType> for JsLexer<'a> {
     }
 
     fn next(&mut self) -> Option<Token<JsTokenType>> {
-
-        let token = loop {
+        loop {
             match self.forward() {
                 // break
                 Some('b') => match self.forward() {
@@ -364,16 +366,41 @@ impl<'a> Lexer<JsTokenType> for JsLexer<'a> {
                     _ => break self.emit_back(JsTokenType::Minus),
                 },
 
-                // < / <=
+                // < / <= / <<
                 Some('<') => match self.forward() {
+                    Some('<') => break self.emit(JsTokenType::ShiftLeft),
                     Some('=') => break self.emit(JsTokenType::LessThanOrEqual),
                     _ => break self.emit_back(JsTokenType::LessThan),
                 },
 
-                // > / >=
+                // > / >= / >> / >>>
                 Some('>') => match self.forward() {
+                    Some('>') => match self.forward() {
+                        Some('>') => self.emit(JsTokenType::ShiftRightZeroFill),
+                        _ => break self.emit_back(JsTokenType::ShiftRight),
+                    },
                     Some('=') => break self.emit(JsTokenType::GreaterThanOrEqual),
                     _ => break self.emit_back(JsTokenType::GreaterThan),
+                },
+
+                // | / || / |=
+                Some('|') => match self.forward() {
+                    Some('|') => break self.emit(JsTokenType::OrOr),
+                    Some('=') => break self.emit(JsTokenType::OrEquals),
+                    _ => break self.emit_back(JsTokenType::Or),
+                },
+
+                // & | && | &=
+                Some('&') => match self.forward() {
+                    Some('&') => break self.emit(JsTokenType::AndAnd),
+                    Some('=') => break self.emit(JsTokenType::AndEquals),
+                    _ => break self.emit_back(JsTokenType::And),
+                },
+
+                // ^ / ^=
+                Some('^') => match self.forward() {
+                    Some('=') => break self.emit(JsTokenType::XorEquals),
+                    _ => break self.emit_back(JsTokenType::Xor),
                 },
 
                 // Single symbols
@@ -385,6 +412,9 @@ impl<'a> Lexer<JsTokenType> for JsLexer<'a> {
                 Some(']') => break self.emit(JsTokenType::CloseBracket),
                 Some(',') => break self.emit(JsTokenType::Comma),
                 Some(';') => break self.emit(JsTokenType::Semicolon),
+                Some('!') => break self.emit(JsTokenType::Bang),
+                Some('~') => break self.emit(JsTokenType::BitwiseNot),
+                Some(':') => break self.emit(JsTokenType::Colon),
 
                 // whitespace
                 Some(' ') | Some('\n') | Some('\r') | Some('\t') => {
@@ -403,9 +433,123 @@ impl<'a> Lexer<JsTokenType> for JsLexer<'a> {
                     break self.emit(JsTokenType::Unexpected);
                 },
             };
-        };
+        }
+    }
+}
 
-        token
+struct Program {
+    statements: Vec<Statement>,
+}
+
+enum Statement {
+    Import(ImportStatement),
+    FunctionDefinition,
+    VariableDefinition,
+    Expression,
+}
+
+struct FunctionDefinition {
+    name: str,
+    parameters: Vec<FunctionParameter>,
+    body: Vec<Statement>,
+}
+
+struct FunctionParameter {
+    name: string,
+}
+
+struct VariableDefinition {
+    def_type: VariableDefinitionType,
+    name: str,
+    value: Option<Expression>,
+    exported: bool,
+}
+
+enum VariableDefinitionType {
+    Var,
+    Const,
+    Let,
+}
+
+struct ImportStatement {
+    items: Vec<ImportItem>,
+    from: str,
+}
+
+struct ImportItem {
+    thing: str,
+    alias: str,
+}
+
+enum LiteralExpr {
+    Number(str),
+    Str(str),
+}
+
+enum Expression {
+    Function(FunctionExpr),
+    Binary(BinaryExpr),
+    Unary(UnaryExpr),
+    MemberAccess(MemberAccessExpr),
+    FunctionCall(FunctionCallExpr),
+}
+
+struct FunctionExpr {
+    def: FunctionDefinition,
+    is_fat_arrow: boolean,
+}
+
+struct BinaryExpr {
+    a: Expression,
+    b: Expression,
+    op: BinaryOp,
+}
+
+struct UnaryExpr {
+    a: Expression,
+    op: UnaryOp,
+}
+
+struct MemberAccessExpr {
+    a: Expression,
+    b: str,
+}
+
+struct FunctionCallExpr {
+    callee: Expression,
+    parameters: Vec<FunctionValue>,
+}
+
+struct FunctionValue {
+    value: Expression,
+}
+
+enum BinaryOp {
+    Add,
+    Subtract,
+    Divide,
+    Multiply,
+    BitwiseAnd,
+    BitwiseOr,
+}
+
+enum UnaryOp {
+    Not,
+    Negative,
+    Positive,
+}
+
+struct JsParser {
+    prev: Option<Token<JsTokenType>>,
+}
+
+impl JsParser {
+    fn new() -> JsParser {
+        JsParser { prev: None }
+    }
+
+    fn receive_all(&mut self, tokens: Vec<Token<JsTokenType>>) {
+
     }
 }
 
@@ -422,10 +566,16 @@ function test(foo, bar) {
 
   return hello
 }");
+    let mut parser = JsParser::new();
+    let mut tokens = Vec::new();
+
     while let Some(token) = lexer.next() {
         println!("{:?}", token);
+        tokens.push(token)
+        //parser.receive(token);
     }
-    println!(" -- done --");
+
+    parser.receive_all(tokens);
 }
 
 // #[cfg(test)]
