@@ -449,18 +449,18 @@ enum Statement {
 }
 
 struct FunctionDefinition {
-    name: str,
+    name: String,
     parameters: Vec<FunctionParameter>,
     body: Vec<Statement>,
 }
 
 struct FunctionParameter {
-    name: string,
+    name: String,
 }
 
 struct VariableDefinition {
     def_type: VariableDefinitionType,
-    name: str,
+    name: String,
     value: Option<Expression>,
     exported: bool,
 }
@@ -473,30 +473,30 @@ enum VariableDefinitionType {
 
 struct ImportStatement {
     items: Vec<ImportItem>,
-    from: str,
+    from: String,
 }
 
 struct ImportItem {
-    thing: str,
-    alias: str,
+    thing: String,
+    alias: String,
 }
 
 enum LiteralExpr {
-    Number(str),
-    Str(str),
+    Number(String),
+    Str(String),
 }
 
 enum Expression {
-    Function(FunctionExpr),
-    Binary(BinaryExpr),
-    Unary(UnaryExpr),
-    MemberAccess(MemberAccessExpr),
-    FunctionCall(FunctionCallExpr),
+    Function(Box<FunctionExpr>),
+    Binary(Box<BinaryExpr>),
+    Unary(Box<UnaryExpr>),
+    MemberAccess(Box<MemberAccessExpr>),
+    FunctionCall(Box<FunctionCallExpr>),
 }
 
 struct FunctionExpr {
     def: FunctionDefinition,
-    is_fat_arrow: boolean,
+    is_fat_arrow: bool,
 }
 
 struct BinaryExpr {
@@ -512,7 +512,7 @@ struct UnaryExpr {
 
 struct MemberAccessExpr {
     a: Expression,
-    b: str,
+    b: String,
 }
 
 struct FunctionCallExpr {
