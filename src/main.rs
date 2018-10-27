@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 #[derive(Debug)]
 enum JsTokenType {
     Function,
@@ -53,6 +55,7 @@ enum JsTokenType {
     ShiftRightZeroFill,
     ShiftLeft,
     BitwiseNot,
+    Newline,
     Unexpected
 }
 
@@ -88,16 +91,27 @@ fn is_identifier_char(ch: char) -> bool {
     ch.is_digit(10) || ch.is_alphabetic() || ch == '_'
 }
 
+enum TokenResult<TToken> {
+    Some(TToken),
+    Skip,
+    Done,
+}
+
 impl<'a> JsLexer<'a> {
-    fn emit(&mut self, token_type: JsTokenType) -> Option<Token<JsTokenType>> {
-        let result = Some(Token { token_type: token_type, first: self.first, last: self.last - 1 });
+    fn emit(&mut self, token_type: JsTokenType) -> TokenResult<Token<JsTokenType>> {
+        let result = TokenResult::Some(Token { token_type: token_type, first: self.first, last: self.last - 1 });
         self.first = self.last;
         result
     }
 
-    fn emit_back(&mut self, token_type: JsTokenType) -> Option<Token<JsTokenType>> {
+    fn emit_back(&mut self, token_type: JsTokenType) -> TokenResult<Token<JsTokenType>> {
         self.backtrack();
         self.emit(token_type)
+    }
+
+    fn skip(&mut self) -> TokenResult<Token<JsTokenType>> {
+        self.first = self.last;
+        TokenResult::Skip
     }
 
     fn forward(&mut self) -> Option<char> {
@@ -117,7 +131,7 @@ impl<'a> JsLexer<'a> {
         self.backtracking = true;
     }
 
-    fn tok_or_ident(&mut self, token: JsTokenType) -> Option<Token<JsTokenType>> {
+    fn tok_or_ident(&mut self, token: JsTokenType) -> TokenResult<Token<JsTokenType>> {
         let mut grew = false;
         loop {
             match self.forward() {
@@ -141,7 +155,7 @@ impl<'a> JsLexer<'a> {
         }
     }
 
-    fn continue_ident(&mut self) -> Option<Token<JsTokenType>> {
+    fn continue_ident(&mut self) -> TokenResult<Token<JsTokenType>> {
         match self.current {
             Some(c) if is_identifier_char(c) => self.tok_or_ident(JsTokenType::Identifier),
             _ => {
@@ -150,14 +164,25 @@ impl<'a> JsLexer<'a> {
             },
         }
     }
-}
 
-impl<'a> Lexer<JsTokenType> for JsLexer<'a> {
-    fn new(text: &'static str) -> JsLexer {
-        JsLexer { chars: text.chars(), prev: None, current: None, backtracking: false, first: 0, last: 0 }
+    fn greedy_newline(&mut self) -> TokenResult<Token<JsTokenType>> {
+        loop {
+            match self.forward() {
+                Some(ch) if ch.is_whitespace() => continue,
+                Some(_) => {
+                    self.backtrack();
+                    break if self.first == 0 {
+                        self.skip()
+                    } else {
+                        self.emit(JsTokenType::Newline)
+                    }
+                },
+                None => break TokenResult::Done, // Ignore newlines that end file
+            }
+        }
     }
 
-    fn next(&mut self) -> Option<Token<JsTokenType>> {
+    fn candidate(&mut self) -> TokenResult<Token<JsTokenType>> {
         loop {
             match self.forward() {
                 // break
@@ -416,14 +441,17 @@ impl<'a> Lexer<JsTokenType> for JsLexer<'a> {
                 Some('~') => break self.emit(JsTokenType::BitwiseNot),
                 Some(':') => break self.emit(JsTokenType::Colon),
 
-                // whitespace
-                Some(' ') | Some('\n') | Some('\r') | Some('\t') => {
+                // newlines
+                Some('\r') | Some('\n') => break self.greedy_newline(),
+
+                // insignificant whitespace
+                Some(' ') | Some('\t') => {
                     self.first += 1;
                     continue;
                 },
 
                 // eof
-                None => break None,
+                None => break TokenResult::Done,
 
                 // *
                 Some(ch) => {
@@ -437,10 +465,28 @@ impl<'a> Lexer<JsTokenType> for JsLexer<'a> {
     }
 }
 
-struct Program {
+impl<'a> Lexer<JsTokenType> for JsLexer<'a> {
+    fn new(text: &'static str) -> JsLexer {
+        JsLexer { chars: text.chars(), prev: None, current: None, backtracking: false, first: 0, last: 0 }
+    }
+
+    fn next(&mut self) -> Option<Token<JsTokenType>> {
+        loop {
+            match self.candidate() {
+                TokenResult::Some(t) => break Some(t),
+                TokenResult::Skip => continue,
+                TokenResult::Done => break None,
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SourceFile {
     statements: Vec<Statement>,
 }
 
+#[derive(Debug)]
 enum Statement {
     Import(ImportStatement),
     FunctionDefinition,
@@ -448,16 +494,19 @@ enum Statement {
     Expression,
 }
 
+#[derive(Debug)]
 struct FunctionDefinition {
     name: String,
     parameters: Vec<FunctionParameter>,
     body: Vec<Statement>,
 }
 
+#[derive(Debug)]
 struct FunctionParameter {
     name: String,
 }
 
+#[derive(Debug)]
 struct VariableDefinition {
     def_type: VariableDefinitionType,
     name: String,
@@ -465,27 +514,32 @@ struct VariableDefinition {
     exported: bool,
 }
 
+#[derive(Debug)]
 enum VariableDefinitionType {
     Var,
     Const,
     Let,
 }
 
+#[derive(Debug)]
 struct ImportStatement {
     items: Vec<ImportItem>,
     from: String,
 }
 
+#[derive(Debug)]
 struct ImportItem {
     thing: String,
     alias: String,
 }
 
+#[derive(Debug)]
 enum LiteralExpr {
     Number(String),
     Str(String),
 }
 
+#[derive(Debug)]
 enum Expression {
     Function(Box<FunctionExpr>),
     Binary(Box<BinaryExpr>),
@@ -494,36 +548,43 @@ enum Expression {
     FunctionCall(Box<FunctionCallExpr>),
 }
 
+#[derive(Debug)]
 struct FunctionExpr {
     def: FunctionDefinition,
     is_fat_arrow: bool,
 }
 
+#[derive(Debug)]
 struct BinaryExpr {
     a: Expression,
     b: Expression,
     op: BinaryOp,
 }
 
+#[derive(Debug)]
 struct UnaryExpr {
     a: Expression,
     op: UnaryOp,
 }
 
+#[derive(Debug)]
 struct MemberAccessExpr {
     a: Expression,
     b: String,
 }
 
+#[derive(Debug)]
 struct FunctionCallExpr {
     callee: Expression,
     parameters: Vec<FunctionValue>,
 }
 
+#[derive(Debug)]
 struct FunctionValue {
     value: Expression,
 }
 
+#[derive(Debug)]
 enum BinaryOp {
     Add,
     Subtract,
@@ -533,6 +594,7 @@ enum BinaryOp {
     BitwiseOr,
 }
 
+#[derive(Debug)]
 enum UnaryOp {
     Not,
     Negative,
@@ -540,16 +602,44 @@ enum UnaryOp {
 }
 
 struct JsParser {
+    reader: TokenReader<JsTokenType>,
     prev: Option<Token<JsTokenType>>,
 }
 
-impl JsParser {
-    fn new() -> JsParser {
-        JsParser { prev: None }
+struct TokenReader<TTokenType> {
+    tokens: VecDeque<Token<TTokenType>>,
+}
+
+impl<TTokenType> TokenReader<TTokenType> {
+    fn new(toks: VecDeque<Token<TTokenType>>) -> TokenReader<TTokenType> {
+        TokenReader { tokens: toks }
     }
 
-    fn receive_all(&mut self, tokens: Vec<Token<JsTokenType>>) {
+    fn next(&mut self) -> Option<Token<TTokenType>> {
+        self.tokens.pop_front()
+    }
+}
 
+impl JsParser {
+    fn new(reader: TokenReader<JsTokenType>) -> JsParser {
+        JsParser { reader: reader, prev: None }
+    }
+
+    fn parse_statement(&mut self) -> Option<Statement> {
+        None
+    }
+
+    fn parse_statements(&mut self) -> Vec<Statement> {
+        let mut statements: Vec<Statement> = vec![];
+        while let Some(statement) = self.parse_statement() {
+            statements.push(statement);
+        }
+        statements
+    }
+
+    fn parse(&mut self) -> SourceFile {
+        let statements = self.parse_statements();
+        SourceFile { statements: statements }
     }
 }
 
@@ -558,24 +648,26 @@ fn main() {
 import { asdg }, zxcv from qwer
 
 function test(foo, bar) {
-  const foobar = hello();
+    const foobar = hello();
 
-  if (foo >= bar) {
-    console.log(foo + bar)
-  }
+    if (foo >= bar) {
+        console.log(foo + bar)
+    }
 
-  return hello
+    return hello
 }");
-    let mut parser = JsParser::new();
-    let mut tokens = Vec::new();
+
+    let mut tokens = VecDeque::<Token<JsTokenType>>::new();
 
     while let Some(token) = lexer.next() {
         println!("{:?}", token);
-        tokens.push(token)
-        //parser.receive(token);
+        tokens.push_back(token)
     }
 
-    parser.receive_all(tokens);
+    let reader = TokenReader::<JsTokenType>::new(tokens);
+    let mut parser = JsParser::new(reader);
+    let file = parser.parse();
+    println!("{:?}", file);
 }
 
 // #[cfg(test)]
