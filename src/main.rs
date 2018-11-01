@@ -56,6 +56,7 @@ enum JsTokenType {
     ShiftLeft,
     BitwiseNot,
     Newline,
+    String,
     Unexpected
 }
 
@@ -161,6 +162,36 @@ impl<'a> JsLexer<'a> {
             _ => {
                 self.backtrack();
                 self.emit(JsTokenType::Identifier)
+            },
+        }
+    }
+
+    fn single_line_string(&mut self, terminator: char) -> TokenResult<Token<JsTokenType>> {
+        loop {
+            match self.forward() {
+                Some(ch) if ch == terminator => break self.emit(JsTokenType::String),
+                Some('\\') => {
+                    self.forward(); // skip the next char
+                    continue;
+                },
+                Some('\r') | Some('\n') => {
+                    self.backtrack();
+                    break self.emit(JsTokenType::String);
+                },
+                None => break self.emit(JsTokenType::String),
+            },
+        }
+    }
+
+    fn multi_line_string(&mut self, terminator: char) -> TokenResult<Token<JsTokenType>> {
+        loop {
+            match self.forward() {
+                Some(ch) if ch == terminator => break self.emit(JsTokenType::String),
+                Some('\\') => {
+                    self.forward(); // skip the next char
+                    continue;
+                },
+                None => break self.emit(JsTokenType::String),
             },
         }
     }
@@ -444,6 +475,11 @@ impl<'a> JsLexer<'a> {
                 // newlines
                 Some('\r') | Some('\n') => break self.greedy_newline(),
 
+                // strings
+                Some('"') => break self.single_line_string('"'),
+                Some('\'') => break self.single_line_string('\''),
+                Some('`') => break self.multi_line_string('`'),
+
                 // insignificant whitespace
                 Some(' ') | Some('\t') => {
                     self.first += 1;
@@ -626,6 +662,17 @@ impl JsParser {
     }
 
     fn parse_statement(&mut self) -> Option<Statement> {
+        loop {
+            let token = self.next()
+            match token.token_type {
+                Import => break self.parse_import(token),
+                Const => break self.parse_var_def(token),
+                Let => break self.parse_var_def(token),
+                Var => break self.parse_var_def(token),
+                Function => break self.parse_fn_def(token),
+                _ => break self.parse_expr(token),
+            }
+        }
         None
     }
 
